@@ -252,9 +252,13 @@ def _validate_sherrif_id(device_token: str, workflow_id: str, mfa_code: str, cod
             os.remove(code_file_path)
         while time.time() - start_time < 120:
             if os.path.exists(code_file_path):
+                time.sleep(2)
                 with open(file=code_file_path, mode="r", encoding="utf-8") as mfa_file:
                     mfa_code = mfa_file.read()
+                    if not mfa_code:
+                        raise Exception("mfacode is empty")
                     break
+            time.sleep(2)
         if mfa_code is None:
             raise Exception("didn't get mfa_code in time, retry")
     url = "https://api.robinhood.com/pathfinder/user_machine/"
@@ -264,10 +268,14 @@ def _validate_sherrif_id(device_token: str, workflow_id: str, mfa_code: str, cod
         inquiries_url = f"https://api.robinhood.com/pathfinder/inquiries/{data['id']}/user_view/"
         res = request_get(inquiries_url)
         challenge_id = res["type_context"]["context"]["sheriff_challenge"]["id"]
-        challenge_url = f"https://api.robinhood.com/challenge/{challenge_id}/respond/"
+        url = challenge_url(challenge_id=challenge_id)
         challenge_payload = {"response": mfa_code}
-        challenge_response = request_post(url=challenge_url, payload=challenge_payload, json=True)
-        if "status" in challenge_response and challenge_response["status"] == "validated":
+        challenge_response = request_post(url=url, payload=challenge_payload, json=True)
+        if (
+            challenge_response
+            and "status" in challenge_response
+            and challenge_response["status"] == "validated"
+        ):
             inquiries_payload = {"sequence": 0, "user_input": {"status": "continue"}}
             inquiries_response = request_post(
                 url=inquiries_url, payload=inquiries_payload, json=True
