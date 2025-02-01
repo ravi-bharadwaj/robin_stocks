@@ -53,7 +53,7 @@ def respond_to_challenge(challenge_id, sms_code):
 def login(
     username=None,
     password=None,
-    expiresIn=86400,
+    expiresIn=689285,
     scope="internal",
     by_sms=True,
     store_session=True,
