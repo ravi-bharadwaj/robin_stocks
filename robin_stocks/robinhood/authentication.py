@@ -53,11 +53,7 @@ def respond_to_challenge(challenge_id, sms_code):
 def login(
     username=None,
     password=None,
-    expiresIn=689285,
-    scope="internal",
-    by_sms=True,
     store_session=True,
-    mfa_code=None,
     pickle_path="",
     pickle_name="",
     code_file_path="",
@@ -73,17 +69,11 @@ def login(
     :param password: The password for your robinhood account. Not required if
         credentials are already cached and valid.
     :type password: Optional[str]
-    :param expiresIn: The time until your login session expires. This is in seconds.
-    :type expiresIn: Optional[int]
     :param scope: Specifies the scope of the authentication.
     :type scope: Optional[str]
-    :param by_sms: Specifies whether to send an email(False) or an sms(True)
-    :type by_sms: Optional[boolean]
     :param store_session: Specifies whether to save the log in authorization
         for future log ins.
     :type store_session: Optional[boolean]
-    :param mfa_code: MFA token if enabled.
-    :type mfa_code: Optional[str]
     :param pickle_path: Allows users to specify the path of the pickle file.
         Accepts both relative and absolute paths.
     :param pickle_name: Allows users to name Pickle token file in order to switch
@@ -92,7 +82,6 @@ def login(
     contains information on whether the access token was generated or loaded from pickle file.
 
     """
-    device_token = generate_device_token()
     home_dir = os.path.expanduser("~")
     data_dir = os.path.join(home_dir, ".tokens")
     if pickle_path:
@@ -104,31 +93,6 @@ def login(
         os.makedirs(data_dir)
     creds_file = "robinhood" + pickle_name.replace("@", "").replace(".", "") + ".pickle"
     pickle_path = os.path.join(data_dir, creds_file)
-    # Challenge type is used if not logging in with two-factor authentication.
-    if by_sms:
-        challenge_type = "sms"
-    else:
-        challenge_type = "email"
-
-    url = login_url()
-    payload = {
-        "client_id": "c82SH0WZOsabOXGP2sxqcj34FxkvfnWRZBKlBjFS",
-        "expires_in": expiresIn,
-        "grant_type": "password",
-        "password": password,
-        "scope": scope,
-        "username": username,
-        "challenge_type": challenge_type,
-        "device_token": device_token,
-        "try_passkeys": False,
-        "token_request_path": "/login",
-        "create_read_only_secondary_token": True,
-        "request_id": "848bd19e-02bc-45d9-99b5-01bce5a79ea7",
-    }
-
-    if mfa_code:
-        payload["mfa_code"] = mfa_code
-
     # If authentication has been stored in pickle file then load it. Stops login server from being pinged so much.
     if os.path.isfile(pickle_path):
         # If store_session has been set to false then delete the pickle file, otherwise try to load it.
@@ -140,10 +104,6 @@ def login(
                     access_token = pickle_data["access_token"]
                     token_type = pickle_data["token_type"]
                     refresh_token = pickle_data["refresh_token"]
-                    # Set device_token to be the original device token when first logged in.
-                    pickle_device_token = pickle_data["device_token"]
-                    payload["device_token"] = pickle_device_token
-                    # Set login status to True in order to try and get account info.
                     set_login_state(True)
                     update_session("Authorization", "{0} {1}".format(token_type, access_token))
                     # Try to load account profile to check that authorization token is still valid.
@@ -155,8 +115,8 @@ def login(
                     return {
                         "access_token": access_token,
                         "token_type": token_type,
-                        "expires_in": expiresIn,
-                        "scope": scope,
+                        "expires_in": 689285,
+                        "scope": "internal",
                         "detail": "logged in using authentication in {0}".format(creds_file),
                         "backup_code": None,
                         "refresh_token": refresh_token,
@@ -171,53 +131,35 @@ def login(
                 update_session("Authorization", None)
         else:
             os.remove(pickle_path)
-
-    # Try to log in normally.
-    if not username:
-        username = input("Robinhood username: ")
-        payload["username"] = username
-
-    if not password:
-        password = getpass.getpass("Robinhood password: ")
-        payload["password"] = password
-
-    data = request_post(url, payload)
+    device_token = generate_device_token()
+    request_id = generate_device_token()
+    url = login_url()
+    payload = {
+        "client_id": "c82SH0WZOsabOXGP2sxqcj34FxkvfnWRZBKlBjFS",
+        "create_read_only_secondary_token": True,
+        "device_token": device_token,
+        "expires_in": 689285,
+        "grant_type": "password",
+        "password": password,
+        "request_id": request_id,
+        "scope": "internal",
+        "token_request_path": "/login",
+        "username": username,
+    }
+    data = request_post(url, payload, ignore_403_status=True)
     # Handle case where mfa or challenge is required.
     if data:
-        if "mfa_required" in data:
-            mfa_token = input("Please type in the MFA code: ")
-            payload["mfa_code"] = mfa_token
-            res = request_post(url, payload, jsonify_data=False)
-            while res.status_code != 200:
-                mfa_token = input(
-                    "That MFA code was not correct. Please type in another MFA code: "
-                )
-                payload["mfa_code"] = mfa_token
-                res = request_post(url, payload, jsonify_data=False)
-            data = res.json()
-        elif "challenge" in data:
-            challenge_id = data["challenge"]["id"]
-            sms_code = input("Enter Robinhood code for validation: ")
-            res = respond_to_challenge(challenge_id, sms_code)
-            while "challenge" in res and res["challenge"]["remaining_attempts"] > 0:
-                sms_code = input(
-                    "That code was not correct. {0} tries remaining. Please type in another code: ".format(
-                        res["challenge"]["remaining_attempts"]
-                    )
-                )
-                res = respond_to_challenge(challenge_id, sms_code)
-            update_session("X-ROBINHOOD-CHALLENGE-RESPONSE-ID", challenge_id)
-            data = request_post(url, payload)
-        elif "verification_workflow" in data:
+        if "verification_workflow" in data:
             workflow_id = data["verification_workflow"]["id"]
             # _validate_sherrif_id(device_token=device_token, workflow_id=workflow_id, mfa_code=mfa_code)
-            _validate_sherrif_id(
+            if _validate_sherrif_id(
                 device_token=device_token,
                 workflow_id=workflow_id,
-                mfa_code=None,
                 code_file_path=code_file_path,
-            )
-            data = request_post(url, payload)
+            ):
+                data = request_post(url, payload)
+            else:
+                raise Exception("Unable to get verification_workflow")
         # Update Session data with authorization or raise exception with the information present in data.
         if "access_token" in data:
             token = "{0} {1}".format(data["token_type"], data["access_token"])
@@ -235,18 +177,20 @@ def login(
                         },
                         f,
                     )
+                    return True
 
         else:
             if "detail" in data:
                 raise Exception(data["detail"])
             raise Exception(f"Received an error response {data}")
     else:
-        raise Exception("Error: Trouble connecting to robinhood API. Check internet connection.")
+        raise Exception("Error: unable to get token request submitted")
     return data
 
 
-def _validate_sherrif_id(device_token: str, workflow_id: str, mfa_code: str, code_file_path: str):
+def _validate_sherrif_id(device_token: str, workflow_id: str, code_file_path: str) -> bool:
     if code_file_path:
+        sms_code = None
         start_time = time.time()
         if os.path.exists(code_file_path):
             os.remove(code_file_path)
@@ -254,12 +198,12 @@ def _validate_sherrif_id(device_token: str, workflow_id: str, mfa_code: str, cod
             if os.path.exists(code_file_path):
                 time.sleep(2)
                 with open(file=code_file_path, mode="r", encoding="utf-8") as mfa_file:
-                    mfa_code = mfa_file.read()
-                    if not mfa_code:
+                    sms_code = mfa_file.read()
+                    if not sms_code:
                         raise Exception("mfacode is empty")
                     break
             time.sleep(2)
-        if mfa_code is None:
+        if sms_code is None:
             raise Exception("didn't get mfa_code in time, retry")
     url = "https://api.robinhood.com/pathfinder/user_machine/"
     payload = {"device_id": device_token, "flow": "suv", "input": {"workflow_id": workflow_id}}
@@ -269,7 +213,7 @@ def _validate_sherrif_id(device_token: str, workflow_id: str, mfa_code: str, cod
         res = request_get(inquiries_url)
         challenge_id = res["type_context"]["context"]["sheriff_challenge"]["id"]
         url = challenge_url(challenge_id=challenge_id)
-        challenge_payload = {"response": mfa_code}
+        challenge_payload = {"response": sms_code}
         challenge_response = request_post(url=url, payload=challenge_payload, json=True)
         if (
             challenge_response
@@ -285,7 +229,7 @@ def _validate_sherrif_id(device_token: str, workflow_id: str, mfa_code: str, cod
                     "result" in inquiries_response["type_context"]
                     and inquiries_response["type_context"]["result"] == "workflow_status_approved"
                 ):
-                    return
+                    return True
                 else:
                     raise Exception(
                         "result not in inquiries_response.type_context %s",

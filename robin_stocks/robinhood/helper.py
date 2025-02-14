@@ -2,7 +2,7 @@
 """
 
 from functools import wraps
-
+import json as jsonlib
 import requests
 from robin_stocks.robinhood.globals import LOGGED_IN, OUTPUT, SESSION
 
@@ -335,7 +335,9 @@ def request_get(url, dataType="regular", payload=None, jsonify_data=True):
     return data
 
 
-def request_post(url, payload=None, timeout=16, json=False, jsonify_data=True):
+def request_post(
+    url, payload=None, timeout=16, json=False, jsonify_data=True, ignore_403_status=False
+):
     """For a given url and payload, makes a post request and returns the response. Allows for responses other than 200.
 
     :param url: The url to send a post request to.
@@ -363,6 +365,12 @@ def request_post(url, payload=None, timeout=16, json=False, jsonify_data=True):
         if res.status_code not in [200, 201, 202, 204, 301, 302, 303, 304, 307, 400, 401, 402, 403]:
             raise Exception("Received " + str(res.status_code))
         if res.status_code == 403:
+            if ignore_403_status:
+                if res.text:
+                    if jsonify_data:
+                        return jsonlib.loads(res.text)
+                    else:
+                        return res.text
             set_login_state(False)
             raise Exception("Unauthorized so setting login state to false")
         data = res.json()
