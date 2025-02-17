@@ -57,6 +57,7 @@ def login(
     pickle_path="",
     pickle_name="",
     code_file_path="",
+    login_started_file_path="",
 ):
     """This function will effectively log the user into robinhood by getting an
     authentication token and saving it to the session header. By default, it
@@ -131,6 +132,14 @@ def login(
                 update_session("Authorization", None)
         else:
             os.remove(pickle_path)
+    if not login_started_file_path or login_started_file_path == "":
+        raise Exception("Login started file path not passed")
+    if os.path.isfile(login_started_file_path):
+        raise Exception("Login already in process")
+
+    with open(login_started_file_path, "wb") as f:
+        f.write("login started")
+
     device_token = generate_device_token()
     request_id = generate_device_token()
     url = login_url()
@@ -200,11 +209,11 @@ def _validate_sherrif_id(device_token: str, workflow_id: str, code_file_path: st
                 with open(file=code_file_path, mode="r", encoding="utf-8") as mfa_file:
                     sms_code = mfa_file.read()
                     if not sms_code:
-                        raise Exception("mfacode is empty")
+                        raise Exception("sms code file is empty")
                     break
             time.sleep(2)
         if sms_code is None:
-            raise Exception("didn't get mfa_code in time, retry")
+            raise Exception("didn't get sms code in time, retry")
     url = "https://api.robinhood.com/pathfinder/user_machine/"
     payload = {"device_id": device_token, "flow": "suv", "input": {"workflow_id": workflow_id}}
     data = request_post(url=url, payload=payload, json=True)
