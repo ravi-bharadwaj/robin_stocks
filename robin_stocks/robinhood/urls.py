@@ -13,6 +13,14 @@ def challenge_url(challenge_id):
     return "https://api.robinhood.com/challenge/{0}/respond/".format(challenge_id)
 
 
+def prompt_status_url(challenge_id):
+    return "https://api.robinhood.com/push/{0}/get_prompts_status/".format(challenge_id)
+
+
+def user_view_url(data_id):
+    return f"https://api.robinhood.com/pathfinder/inquiries/{data_id}/user_view/"
+
+
 # Profiles
 
 

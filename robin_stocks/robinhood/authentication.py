@@ -137,7 +137,7 @@ def login(
     if os.path.isfile(login_started_file_path):
         raise Exception("Login already in process")
 
-    with open(login_started_file_path, "wb") as f:
+    with open(file=login_started_file_path, mode="w") as f:
         f.write("login started")
 
     device_token = generate_device_token()
@@ -161,14 +161,16 @@ def login(
         if "verification_workflow" in data:
             workflow_id = data["verification_workflow"]["id"]
             # _validate_sherrif_id(device_token=device_token, workflow_id=workflow_id, mfa_code=mfa_code)
-            if _validate_sherrif_id(
+            if _do_sheriff_validations(
                 device_token=device_token,
                 workflow_id=workflow_id,
                 code_file_path=code_file_path,
             ):
                 data = request_post(url, payload)
             else:
-                raise Exception("Unable to get verification_workflow")
+                raise Exception(  # pylint: disable=broad-exception-raised
+                    "Unable to get verification_workflow"
+                )
         # Update Session data with authorization or raise exception with the information present in data.
         if "access_token" in data:
             token = "{0} {1}".format(data["token_type"], data["access_token"])
@@ -190,16 +192,86 @@ def login(
 
         else:
             if "detail" in data:
-                raise Exception(data["detail"])
-            raise Exception(f"Received an error response {data}")
+                raise Exception(data["detail"])  # pylint: disable=broad-exception-raised
+            raise Exception(  # pylint: disable=broad-exception-raised
+                f"Received an error response {data}"
+            )
     else:
-        raise Exception("Error: unable to get token request submitted")
+        raise Exception(  # pylint: disable=broad-exception-raised
+            "Error: unable to get token request submitted"
+        )
     return data
 
 
-def _validate_sherrif_id(device_token: str, workflow_id: str, code_file_path: str) -> bool:
-    if code_file_path:
-        sms_code = None
+def _do_sheriff_validations(device_token: str, workflow_id: str, code_file_path: str) -> bool:
+    url = "https://api.robinhood.com/pathfinder/user_machine/"
+    payload = {"device_id": device_token, "flow": "suv", "input": {"workflow_id": workflow_id}}
+    data = request_post(url=url, payload=payload, json=True)
+    if data and "id" in data:
+        url = user_view_url(data["id"])
+        user_view_response = request_get(url=url)
+        if _process_user_view_response(
+            user_view_response=user_view_response, code_file_path=code_file_path
+        ):
+            user_view_payload = {"sequence": 0, "user_input": {"status": "continue"}}
+            approval_response = request_post(url=url, payload=user_view_payload, json=True)
+            if "type_context" in approval_response:
+                if (
+                    "result" in approval_response["type_context"]
+                    and approval_response["type_context"]["result"] == "workflow_status_approved"
+                ):
+                    return True
+                raise Exception(  # pylint: disable=broad-exception-raised
+                    f"result not in inquiries_response.type_context {approval_response['type_context']}"
+                )
+            raise Exception(  # pylint: disable=broad-exception-raised
+                f"type_context not in inauiries response {approval_response}"
+            )
+    raise Exception(  # pylint: disable=broad-exception-raised
+        f"invalid user_machine_response {data}"
+    )
+
+
+def _process_user_view_response(user_view_response, code_file_path) -> bool:
+    if (
+        user_view_response
+        and "context" in user_view_response
+        and "sheriff_challenge" in user_view_response["context"]
+    ):
+        challenge_type = user_view_response["context"]["sheriff_challenge"]["type"]
+        if challenge_type == "prompt":
+            return _validate_via_prompt(
+                challenge_id=user_view_response["context"]["sheriff_challenge"]["id"],
+            )
+        elif challenge_type == "sms":
+            return _validate_via_sms(
+                challenge_id=user_view_response["context"]["sheriff_challenge"]["id"],
+                code_file_path=code_file_path,
+            )
+        else:
+            raise Exception(  # pylint: disable=broad-exception-raised
+                f"Unsupported challenge type {challenge_type}"
+            )
+    raise Exception(  # pylint: disable=broad-exception-raised
+        f"invalid response {user_view_response}"
+    )
+
+
+def _validate_via_prompt(challenge_id: str) -> bool:
+    start_time = time.time()
+    url = prompt_status_url(challenge_id)
+    while time.time() - start_time < 120:
+        res = request_get(url)
+        if res and "challenge_status" in res:
+            if res["challenge_status"] == "issued":
+                continue
+            if res["challenge_status"] == "validated":
+                return True
+    raise Exception("didn't approve in time, retry")  # pylint: disable=broad-exception-raised
+
+
+def _validate_via_sms(challenge_id: str, code_file_path: str) -> bool:
+    def _get_sms_code(code_file_path):
         start_time = time.time()
         if os.path.exists(code_file_path):
             os.remove(code_file_path)
@@ -209,48 +281,28 @@ def _validate_sherrif_id(device_token: str, workflow_id: str, code_file_path: st
                 with open(file=code_file_path, mode="r", encoding="utf-8") as mfa_file:
                     sms_code = mfa_file.read()
                     if not sms_code:
-                        raise Exception("sms code file is empty")
-                    break
+                        raise Exception(  # pylint: disable=broad-exception-raised
+                            "sms code file is empty"
+                        )
+                    return sms_code
             time.sleep(2)
-        if sms_code is None:
-            raise Exception("didn't get sms code in time, retry")
-    url = "https://api.robinhood.com/pathfinder/user_machine/"
-    payload = {"device_id": device_token, "flow": "suv", "input": {"workflow_id": workflow_id}}
-    data = request_post(url=url, payload=payload, json=True)
-    if "id" in data:
-        inquiries_url = f"https://api.robinhood.com/pathfinder/inquiries/{data['id']}/user_view/"
-        res = request_get(inquiries_url)
-        challenge_id = res["type_context"]["context"]["sheriff_challenge"]["id"]
-        url = challenge_url(challenge_id=challenge_id)
-        challenge_payload = {"response": sms_code}
-        challenge_response = request_post(url=url, payload=challenge_payload, json=True)
-        if (
-            challenge_response
-            and "status" in challenge_response
-            and challenge_response["status"] == "validated"
-        ):
-            inquiries_payload = {"sequence": 0, "user_input": {"status": "continue"}}
-            inquiries_response = request_post(
-                url=inquiries_url, payload=inquiries_payload, json=True
-            )
-            if "type_context" in inquiries_response:
-                if (
-                    "result" in inquiries_response["type_context"]
-                    and inquiries_response["type_context"]["result"] == "workflow_status_approved"
-                ):
-                    return True
-                else:
-                    raise Exception(
-                        "result not in inquiries_response.type_context %s",
-                        str(inquiries_response["type_context"]),
-                    )
-            else:
-                raise Exception(
-                    "type_context not in inauiries response %s", str(inquiries_response)
-                )
-        else:
-            raise Exception("Challenge not validated %s", str(challenge_response))
-    raise Exception("Id not returned in user-machine call")
+        raise Exception(  # pylint: disable=broad-exception-raised
+            "didn't get sms code in time, retry"
+        )
+
+    url = challenge_url(challenge_id=challenge_id)
+    request_post(url=url)
+    challenge_payload = {"response": _get_sms_code(code_file_path=code_file_path)}
+    challenge_response = request_post(url=url, payload=challenge_payload, json=True)
+    if (
+        challenge_response
+        and "status" in challenge_response
+        and challenge_response["status"] == "validated"
+    ):
+        return True
+    raise Exception(  # pylint: disable=broad-exception-raised
+        f"Challenge not validated {challenge_response}"
+    )
 
 
 @login_required
