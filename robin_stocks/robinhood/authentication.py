@@ -264,6 +264,7 @@ def _validate_via_prompt(challenge_id: str) -> bool:
         res = request_get(url)
         if res and "challenge_status" in res:
             if res["challenge_status"] == "issued":
+                time.sleep(10)
                 continue
             if res["challenge_status"] == "validated":
                 return True
