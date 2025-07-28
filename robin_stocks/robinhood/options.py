@@ -1,24 +1,30 @@
 """Contains functions for getting information about options."""
+
 import sys
 from robin_stocks.robinhood.helper import *
 from robin_stocks.robinhood.urls import *
+import datetime as dt
+
 
 def spinning_cursor():
-    """ This is a generator function to yield a character. """
+    """This is a generator function to yield a character."""
     while True:
-        for cursor in '|/-\\':
+        for cursor in "|/-\\":
             yield cursor
+
 
 spinner = spinning_cursor()
 
+
 def write_spinner():
-    """ Function to create a spinning cursor to tell user that the code is working on getting market data. """
-    if get_output()==sys.stdout:
-        marketString = 'Loading Market Data '
+    """Function to create a spinning cursor to tell user that the code is working on getting market data."""
+    if get_output() == sys.stdout:
+        marketString = "Loading Market Data "
         sys.stdout.write(marketString)
         sys.stdout.write(next(spinner))
         sys.stdout.flush()
-        sys.stdout.write('\b'*(len(marketString)+1))
+        sys.stdout.write("\b" * (len(marketString) + 1))
+
 
 @login_required
 def get_aggregate_positions(info=None, account_number=None):
@@ -31,8 +37,9 @@ def get_aggregate_positions(info=None, account_number=None):
 
     """
     url = aggregate_url(account_number=account_number)
-    data = request_get(url, 'pagination')
-    return(filter_data(data, info))
+    data = request_get(url, "pagination")
+    return filter_data(data, info)
+
 
 @login_required
 def get_aggregate_open_positions(info=None, account_number=None):
@@ -45,9 +52,9 @@ def get_aggregate_open_positions(info=None, account_number=None):
 
     """
     url = aggregate_url(account_number=account_number)
-    payload = {'nonzero': 'True'}
-    data = request_get(url, 'pagination', payload)
-    return(filter_data(data, info))
+    payload = {"nonzero": "True"}
+    data = request_get(url, "pagination", payload)
+    return filter_data(data, info)
 
 
 @login_required
@@ -61,9 +68,9 @@ def get_market_options(info=None):
 
     """
     url = option_orders_url()
-    data = request_get(url, 'pagination')
+    data = request_get(url, "pagination")
 
-    return(filter_data(data, info))
+    return filter_data(data, info)
 
 
 @login_required
@@ -77,8 +84,8 @@ def get_all_option_positions(info=None, account_number=None):
 
     """
     url = option_positions_url(account_number=account_number)
-    data = request_get(url, 'pagination')
-    return(filter_data(data, info))
+    data = request_get(url, "pagination")
+    return filter_data(data, info)
 
 
 @login_required
@@ -94,10 +101,10 @@ def get_open_option_positions(account_number=None, info=None):
 
     """
     url = option_positions_url(account_number=account_number)
-    payload = {'nonzero': 'True'}
-    data = request_get(url, 'pagination', payload)
+    payload = {"nonzero": "True"}
+    data = request_get(url, "pagination", payload)
 
-    return(filter_data(data, info))
+    return filter_data(data, info)
 
 
 def get_chains(symbol, info=None):
@@ -120,10 +127,13 @@ def get_chains(symbol, info=None):
     url = chains_url(symbol)
     data = request_get(url)
 
-    return(filter_data(data, info))
+    return filter_data(data, info)
+
 
 @login_required
-def find_tradable_options(symbol, expirationDate=None, strikePrice=None, optionType=None, info=None):
+def find_tradable_options(
+    symbol, expirationDate=None, strikePrice=None, optionType=None, info=None
+):
     """Returns a list of all available options for a stock.
 
     :param symbol: The ticker of the stock.
@@ -151,19 +161,95 @@ def find_tradable_options(symbol, expirationDate=None, strikePrice=None, optionT
         print("Symbol {} is not valid for finding options.".format(symbol), file=get_output())
         return [None]
 
-    payload = {'chain_id': id_for_chain(symbol),
-               'chain_symbol': symbol,
-               'state': 'active'}
+    payload = {"chain_id": id_for_chain(symbol), "chain_symbol": symbol, "state": "active"}
 
     if expirationDate:
-        payload['expiration_dates'] = expirationDate
+        payload["expiration_dates"] = expirationDate
     if strikePrice:
-        payload['strike_price'] = strikePrice
+        payload["strike_price"] = strikePrice
     if optionType:
-        payload['type'] = optionType
+        payload["type"] = optionType
 
-    data = request_get(url, 'pagination', payload)
-    return(filter_data(data, info))
+    data = request_get(url, "pagination", payload)
+    return filter_data(data, info)
+
+
+@login_required
+def get_buy_sell_signal_based_on_option(inputSymbols, current_price):
+    """Returns a list of all the option orders that match the seach parameters
+
+    :param inputSymbols: The ticker of either a single stock or a list of stocks.
+    :type inputSymbols: str
+    :param expirationDate: Represents max-expiration-date in the format YYYY-MM-DD.
+    :type expirationDate: str
+    :param optionType: Can be either 'call' or 'put' or leave blank to get both.
+    :type optionType: Optional[str]
+    :param info: Will filter the results to get a specific value.
+    :type info: Optional[str]
+    :returns: Returns a list of dictionaries of key/value pairs for all options of the stock that match the search parameters. \
+    If info parameter is provided, a list of strings is returned where the strings are the value of the key that matches info.
+
+    """
+    current_date = dt.datetime.now()
+    option_begin_date = (current_date + dt.timedelta(days=7)).strftime("%Y-%m-%d")
+    option_end_date = (current_date + dt.timedelta(days=30)).strftime("%Y-%m-%d")
+    min_profit_price = current_price * 1.15
+    max_profit_price = current_price * 1.30
+    min_loss_price = current_price * 0.85
+    max_loss_price = current_price * 0.70
+    try:
+        symbols = inputs_to_set(inputSymbols)
+    except AttributeError as message:
+        print(message, file=get_output())
+        return [None]
+
+    data = []
+    filtered_call_options = []
+    filtered_put_options = []
+    for symbol in symbols:
+        all_options = find_tradable_options(symbol, None, None, None, None)
+        for option in all_options:
+            if option_begin_date <= option.get("expiration_date") <= option_end_date:
+                strike_price = float(option.get("strike_price"))
+                if option.get("type") == "call":
+                    if min_profit_price <= strike_price <= max_profit_price:
+                        filtered_call_options.append(option)
+                elif max_loss_price <= strike_price <= min_loss_price:
+                    filtered_put_options.append(option)
+    total_open_interest_for_call = 0
+    total_open_interest_for_put = 0
+    call_option_details = []
+    put_option_details = []
+    for call_option in filtered_call_options:
+        market_data = get_option_market_data_by_id(call_option["id"])
+        if market_data[0]["open_interest"] > 1000:
+            call_option_details.append(
+                {
+                    "expiration_date": call_option["expiration_date"],
+                    "strike_price": call_option["strike_price"],
+                    "open_interest": market_data[0]["open_interest"],
+                }
+            )
+            total_open_interest_for_call += market_data[0]["open_interest"]
+
+    for put_option in filtered_put_options:
+        market_data = get_option_market_data_by_id(put_option["id"])
+        if market_data[0]["open_interest"] > 1000:
+
+            put_option_details.append(
+                {
+                    "expiration_date": call_option["expiration_date"],
+                    "strike_price": call_option["strike_price"],
+                    "open_interest": market_data[0]["open_interest"],
+                }
+            )
+            total_open_interest_for_put += market_data[0]["open_interest"]
+    return {
+        "call_option_details": call_option_details,
+        "put_option_details": put_option_details,
+        "should_buy": total_open_interest_for_call > total_open_interest_for_put * 1.1,
+    }
+
 
 @login_required
 def find_options_by_expiration(inputSymbols, expirationDate, optionType=None, info=None):
@@ -192,17 +278,20 @@ def find_options_by_expiration(inputSymbols, expirationDate, optionType=None, in
     data = []
     for symbol in symbols:
         allOptions = find_tradable_options(symbol, expirationDate, None, optionType, None)
-        filteredOptions = [item for item in allOptions if item.get("expiration_date") == expirationDate]
+        filteredOptions = [
+            item for item in allOptions if item.get("expiration_date") == expirationDate
+        ]
 
         for item in filteredOptions:
-            marketData = get_option_market_data_by_id(item['id'])
+            marketData = get_option_market_data_by_id(item["id"])
             if marketData:
                 item.update(marketData[0])
             write_spinner()
 
         data.extend(filteredOptions)
 
-    return(filter_data(data, info))
+    return filter_data(data, info)
+
 
 @login_required
 def find_options_by_strike(inputSymbols, strikePrice, optionType=None, info=None):
@@ -233,17 +322,20 @@ def find_options_by_strike(inputSymbols, strikePrice, optionType=None, info=None
         filteredOptions = find_tradable_options(symbol, None, strikePrice, optionType, None)
 
         for item in filteredOptions:
-            marketData = get_option_market_data_by_id(item['id'])
+            marketData = get_option_market_data_by_id(item["id"])
             if marketData:
                 item.update(marketData[0])
             write_spinner()
 
         data.extend(filteredOptions)
 
-    return(filter_data(data, info))
+    return filter_data(data, info)
+
 
 @login_required
-def find_options_by_expiration_and_strike(inputSymbols, expirationDate, strikePrice, optionType=None, info=None):
+def find_options_by_expiration_and_strike(
+    inputSymbols, expirationDate, strikePrice, optionType=None, info=None
+):
     """Returns a list of all the option orders that match the seach parameters
 
     :param inputSymbols: The ticker of either a single stock or a list of stocks.
@@ -271,10 +363,12 @@ def find_options_by_expiration_and_strike(inputSymbols, expirationDate, strikePr
     data = []
     for symbol in symbols:
         allOptions = find_tradable_options(symbol, expirationDate, strikePrice, optionType, None)
-        filteredOptions = [item for item in allOptions if item.get("expiration_date") == expirationDate]
+        filteredOptions = [
+            item for item in allOptions if item.get("expiration_date") == expirationDate
+        ]
 
         for item in filteredOptions:
-            marketData = get_option_market_data_by_id(item['id'])
+            marketData = get_option_market_data_by_id(item["id"])
             if marketData:
                 item.update(marketData[0])
             write_spinner()
@@ -283,8 +377,18 @@ def find_options_by_expiration_and_strike(inputSymbols, expirationDate, strikePr
 
     return filter_data(data, info)
 
+
 @login_required
-def find_options_by_specific_profitability(inputSymbols, expirationDate=None, strikePrice=None, optionType=None, typeProfit="chance_of_profit_short", profitFloor=0.0, profitCeiling=1.0, info=None):
+def find_options_by_specific_profitability(
+    inputSymbols,
+    expirationDate=None,
+    strikePrice=None,
+    optionType=None,
+    typeProfit="chance_of_profit_short",
+    profitFloor=0.0,
+    profitCeiling=1.0,
+    info=None,
+):
     """Returns a list of option market data for several stock tickers that match a range of profitability.
 
     :param inputSymbols: May be a single stock ticker or a list of stock tickers.
@@ -310,8 +414,11 @@ def find_options_by_specific_profitability(inputSymbols, expirationDate=None, st
     symbols = inputs_to_set(inputSymbols)
     data = []
 
-    if (typeProfit != "chance_of_profit_short" and typeProfit != "chance_of_profit_long"):
-        print("Invalid string for 'typeProfit'. Defaulting to 'chance_of_profit_short'.", file=get_output())
+    if typeProfit != "chance_of_profit_short" and typeProfit != "chance_of_profit_long":
+        print(
+            "Invalid string for 'typeProfit'. Defaulting to 'chance_of_profit_short'.",
+            file=get_output(),
+        )
         typeProfit = "chance_of_profit_short"
 
     for symbol in symbols:
@@ -320,20 +427,21 @@ def find_options_by_specific_profitability(inputSymbols, expirationDate=None, st
             if expirationDate and option.get("expiration_date") != expirationDate:
                 continue
 
-            market_data = get_option_market_data_by_id(option['id'])
-            
+            market_data = get_option_market_data_by_id(option["id"])
+
             if len(market_data):
                 option.update(market_data[0])
                 write_spinner()
 
                 try:
                     floatValue = float(option[typeProfit])
-                    if (floatValue >= profitFloor and floatValue <= profitCeiling):
+                    if floatValue >= profitFloor and floatValue <= profitCeiling:
                         data.append(option)
                 except:
                     pass
 
-    return(filter_data(data, info))
+    return filter_data(data, info)
+
 
 @login_required
 def get_option_market_data_by_id(id, info=None):
@@ -350,16 +458,15 @@ def get_option_market_data_by_id(id, info=None):
     """
     instrument = get_option_instrument_data_by_id(id)
     if instrument is None:
-      # e.g. 503 Server Error: Service Unavailable for url: https://api.robinhood.com/options/instruments/d1058013-09a2-4063-b6b0-92717e17d0c0/
-      return None  # just return None which the caller can easily check; do NOT use faked empty data, it will only cause future problem
+        # e.g. 503 Server Error: Service Unavailable for url: https://api.robinhood.com/options/instruments/d1058013-09a2-4063-b6b0-92717e17d0c0/
+        return None  # just return None which the caller can easily check; do NOT use faked empty data, it will only cause future problem
     else:
-      payload = {
-          "instruments" : instrument['url']
-      }
-      url = marketdata_options_url()
-      data = request_get(url, 'results', payload)
+        payload = {"instruments": instrument["url"]}
+        url = marketdata_options_url()
+        data = request_get(url, "results", payload)
 
-    return(filter_data(data, info))
+    return filter_data(data, info)
+
 
 @login_required
 def get_option_market_data(inputSymbols, expirationDate, strikePrice, optionType, info=None):
@@ -394,7 +501,7 @@ def get_option_market_data(inputSymbols, expirationDate, strikePrice, optionType
         marketData = get_option_market_data_by_id(optionID)
         data.append(marketData)
 
-    return(filter_data(data, info))
+    return filter_data(data, info)
 
 
 def get_option_instrument_data_by_id(id, info=None):
@@ -410,7 +517,7 @@ def get_option_instrument_data_by_id(id, info=None):
     """
     url = option_instruments_url(id)
     data = request_get(url)
-    return(filter_data(data, info))
+    return filter_data(data, info)
 
 
 def get_option_instrument_data(symbol, expirationDate, strikePrice, optionType, info=None):
@@ -441,10 +548,19 @@ def get_option_instrument_data(symbol, expirationDate, strikePrice, optionType, 
     url = option_instruments_url(optionID)
     data = request_get(url)
 
-    return(filter_data(data, info))
+    return filter_data(data, info)
 
 
-def get_option_historicals(symbol, expirationDate, strikePrice, optionType, interval='hour', span='week', bounds='regular', info=None):
+def get_option_historicals(
+    symbol,
+    expirationDate,
+    strikePrice,
+    optionType,
+    interval="hour",
+    span="week",
+    bounds="regular",
+    info=None,
+):
     """Returns the data that is used to make the graphs.
 
     :param symbol: The ticker of the stock.
@@ -475,33 +591,32 @@ def get_option_historicals(symbol, expirationDate, strikePrice, optionType, inte
         print(message, file=get_output())
         return [None]
 
-    interval_check = ['5minute', '10minute', 'hour', 'day', 'week']
-    span_check = ['day', 'week', 'year', '5year']
-    bounds_check = ['extended', 'regular', 'trading']
+    interval_check = ["5minute", "10minute", "hour", "day", "week"]
+    span_check = ["day", "week", "year", "5year"]
+    bounds_check = ["extended", "regular", "trading"]
     if interval not in interval_check:
         print(
-            'ERROR: Interval must be "5minute","10minute","hour","day",or "week"', file=get_output())
-        return([None])
+            'ERROR: Interval must be "5minute","10minute","hour","day",or "week"', file=get_output()
+        )
+        return [None]
     if span not in span_check:
         print('ERROR: Span must be "day", "week", "year", or "5year"', file=get_output())
-        return([None])
+        return [None]
     if bounds not in bounds_check:
         print('ERROR: Bounds must be "extended","regular",or "trading"', file=get_output())
-        return([None])
+        return [None]
 
     optionID = id_for_option(symbol, expirationDate, strikePrice, optionType)
 
     url = option_historicals_url(optionID)
-    payload = {'span': span,
-               'interval': interval,
-               'bounds': bounds}
-    data = request_get(url, 'regular', payload)
-    if (data == None or data == [None]):
+    payload = {"span": span, "interval": interval, "bounds": bounds}
+    data = request_get(url, "regular", payload)
+    if data == None or data == [None]:
         return data
 
     histData = []
-    for subitem in data['data_points']:
-        subitem['symbol'] = symbol
+    for subitem in data["data_points"]:
+        subitem["symbol"] = symbol
         histData.append(subitem)
 
-    return(filter_data(histData, info))
+    return filter_data(histData, info)
