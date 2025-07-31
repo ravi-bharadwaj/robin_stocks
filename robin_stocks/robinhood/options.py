@@ -222,7 +222,7 @@ def get_buy_sell_signal_based_on_option(inputSymbols, current_price):
     put_option_details = []
     for call_option in filtered_call_options:
         market_data = get_option_market_data_by_id(call_option["id"])
-        if market_data[0]["open_interest"] > 1000:
+        if len(market_data) > 0 and market_data[0]["open_interest"] > 1000:
             call_option_details.append(
                 {
                     "expiration_date": call_option["expiration_date"],
@@ -234,12 +234,12 @@ def get_buy_sell_signal_based_on_option(inputSymbols, current_price):
 
     for put_option in filtered_put_options:
         market_data = get_option_market_data_by_id(put_option["id"])
-        if market_data[0]["open_interest"] > 1000:
+        if len(market_data) > 0 and market_data[0]["open_interest"] > 500:
 
             put_option_details.append(
                 {
-                    "expiration_date": call_option["expiration_date"],
-                    "strike_price": call_option["strike_price"],
+                    "expiration_date": put_option["expiration_date"],
+                    "strike_price": put_option["strike_price"],
                     "open_interest": market_data[0]["open_interest"],
                 }
             )
