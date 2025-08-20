@@ -188,7 +188,8 @@ def login(
                         },
                         f,
                     )
-                    os.remove(login_started_file_path)
+                    if os.path.exists(login_started_file_path):
+                        os.remove(login_started_file_path)
                     return True
 
         else:
