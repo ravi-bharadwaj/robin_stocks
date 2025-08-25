@@ -249,7 +249,8 @@ def get_buy_sell_signal_based_on_option(inputSymbols, current_price):
         "put_option_details": put_option_details,
         "total_calls": total_open_interest_for_call,
         "total_put": total_open_interest_for_put,
-        "should_buy": total_open_interest_for_call > total_open_interest_for_put * 1.1,
+        "should_buy": total_open_interest_for_call > total_open_interest_for_put * 1.1
+        or (total_open_interest_for_call == 0 and total_open_interest_for_put == 0),
     }
 
 
